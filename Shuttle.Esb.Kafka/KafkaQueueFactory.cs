@@ -26,6 +26,6 @@ namespace Shuttle.Esb.Kafka
             return new KafkaQueue(uri, _kafkaOptions, _cancellationTokenSource.Get().Token);
         }
 
-        public string Scheme => KafkaQueueUriParser.Scheme;
+        public string Scheme => KafkaQueue.Scheme;
     }
 }

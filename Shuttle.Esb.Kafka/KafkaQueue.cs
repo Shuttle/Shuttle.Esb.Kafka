@@ -14,6 +14,8 @@ namespace Shuttle.Esb.Kafka
 {
     public class KafkaQueue : IQueue, ICreateQueue, IDropQueue, IPurgeQueue, IDisposable
     {
+        public static readonly string Scheme = "kafka";
+
         private readonly CancellationToken _cancellationToken;
         private IConsumer<Ignore, string> _consumer;
         private readonly KafkaOptions _kafkaOptions;
@@ -32,20 +34,19 @@ namespace Shuttle.Esb.Kafka
             Guard.AgainstNull(kafkaOptions, nameof(kafkaOptions));
             Guard.AgainstNull(cancellationToken, nameof(cancellationToken));
 
-            Uri = uri;
+            Uri = new QueueUri(uri);
 
-            var parser = new KafkaQueueUriParser(uri);
+            Uri.SchemeInvariant(Scheme);
 
             _cancellationToken = cancellationToken;
-            _kafkaOptions = kafkaOptions.Get(parser.ConfigurationName);
+            _kafkaOptions = kafkaOptions.Get(Uri.ConfigurationName);
 
             if (_kafkaOptions == null)
             {
-                throw new InvalidOperationException(string.Format(Resources.ConfigurationNameMissing,
-                    parser.ConfigurationName));
+                throw new InvalidOperationException(string.Format(Resources.ConfigurationNameMissing, Uri.ConfigurationName));
             }
 
-            Topic = parser.Topic;
+            Topic = Uri.Queue;
 
             var entryAssembly = Assembly.GetEntryAssembly();
 
@@ -345,7 +346,7 @@ namespace Shuttle.Esb.Kafka
             }
         }
 
-        public Uri Uri { get; }
+        public QueueUri Uri { get; }
         public bool IsStream => true;
 
         internal class AcknowledgementToken
