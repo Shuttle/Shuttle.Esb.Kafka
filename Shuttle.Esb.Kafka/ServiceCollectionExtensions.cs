@@ -24,7 +24,29 @@ namespace Shuttle.Esb.Kafka
                     options.MessageSendMaxRetries = pair.Value.MessageSendMaxRetries;
                     options.NumPartitions = pair.Value.NumPartitions;
                     options.ReplicationFactor = pair.Value.ReplicationFactor;
-                    options.RetryBackoffMs = pair.Value.RetryBackoffMs;
+                    options.RetryBackoff = pair.Value.RetryBackoff;
+                    options.EnableAutoCommit = pair.Value.EnableAutoCommit;
+                    options.EnableAutoOffsetStore = pair.Value.EnableAutoOffsetStore;
+                    options.FlushEnqueue= pair.Value.FlushEnqueue;
+                    options.UseCancellationToken = pair.Value.UseCancellationToken;
+                    options.ConsumeTimeout = pair.Value.ConsumeTimeout;
+                    options.ConnectionsMaxIdle = pair.Value.ConnectionsMaxIdle;
+                    options.OperationTimeout = pair.Value.OperationTimeout;
+
+                    if (options.ConsumeTimeout < TimeSpan.FromMilliseconds(25))
+                    {
+                        options.ConsumeTimeout = TimeSpan.FromMilliseconds(25);
+                    }
+
+                    if (options.ConnectionsMaxIdle < TimeSpan.Zero)
+                    {
+                        options.ConnectionsMaxIdle = TimeSpan.Zero;
+                    }
+
+                    if (options.OperationTimeout < TimeSpan.FromMilliseconds(25))
+                    {
+                        options.OperationTimeout = TimeSpan.FromMilliseconds(25);
+                    }
                 });
             }
 

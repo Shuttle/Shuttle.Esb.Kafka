@@ -11,7 +11,7 @@ namespace Shuttle.Esb.Kafka.Tests
         public void Should_be_able_to_distribute_messages(bool isTransactionalEndpoint)
         {
             TestDistributor(KafkaFixture.GetServiceCollection(), 
-                KafkaFixture.GetServiceCollection(), @"kafka://local/{0}", isTransactionalEndpoint);
+                KafkaFixture.GetServiceCollection(), @"kafka://local/{0}", isTransactionalEndpoint, 30);
         }
     }
 }

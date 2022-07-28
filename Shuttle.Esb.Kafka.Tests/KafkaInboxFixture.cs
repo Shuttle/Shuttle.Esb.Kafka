@@ -25,7 +25,7 @@ namespace Shuttle.Esb.Kafka.Tests
         [TestCase(100, false)]
         public void Should_be_able_to_process_queue_timeously(int count, bool isTransactionalEndpoint)
         {
-            TestInboxThroughput(KafkaFixture.GetServiceCollection(), "kafka://local/{0}", 1000, count, 1, isTransactionalEndpoint);
+            TestInboxThroughput(KafkaFixture.GetServiceCollection(true), "kafka://local/{0}", 1000, count, 1, isTransactionalEndpoint);
         }
     }
 }

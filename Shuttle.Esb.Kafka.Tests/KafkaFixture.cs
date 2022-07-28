@@ -7,7 +7,7 @@ namespace Shuttle.Esb.Kafka.Tests
 {
     public class KafkaFixture
     {
-        public static IServiceCollection GetServiceCollection()
+        public static IServiceCollection GetServiceCollection(bool useCancellationToken = false)
         {
             var services = new ServiceCollection();
 
@@ -28,7 +28,13 @@ namespace Shuttle.Esb.Kafka.Tests
             {
                 builder.AddOptions("local", new KafkaOptions
                 {
-                    BootstrapServers = "localhost:9092"
+                    BootstrapServers = "localhost:9092",
+                    EnableAutoCommit = false,
+                    EnableAutoOffsetStore = false,
+                    FlushEnqueue = true,
+                    UseCancellationToken = useCancellationToken,
+                    ConsumeTimeout = TimeSpan.FromSeconds(5),
+                    ConnectionsMaxIdle = TimeSpan.FromSeconds(5)
                 });
             });
 
