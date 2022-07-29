@@ -32,7 +32,7 @@ namespace Shuttle.Esb.Kafka
             Guard.AgainstNull(cancellationToken, nameof(cancellationToken));
 
             Uri = uri;
-            Topic = Uri.Queue;
+            Topic = Uri.QueueName;
 
             _cancellationToken = cancellationToken;
             _kafkaOptions = kafkaOptions;

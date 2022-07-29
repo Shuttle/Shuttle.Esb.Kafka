@@ -1,6 +1,7 @@
 ﻿using System;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Shuttle.Core.Contract;
 
 namespace Shuttle.Esb.Kafka
@@ -15,6 +16,8 @@ namespace Shuttle.Esb.Kafka
             var kafkaBuilder = new KafkaBuilder(services);
 
             builder?.Invoke(kafkaBuilder);
+
+            services.AddSingleton<IValidateOptions<KafkaOptions>, KafkaOptionsValidator>();
 
             foreach (var pair in kafkaBuilder.KafkaOptions)
             {
