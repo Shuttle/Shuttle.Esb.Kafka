@@ -2,11 +2,9 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
-using System.Reflection;
 using System.Threading;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
-using Microsoft.Extensions.Options;
 using Shuttle.Core.Contract;
 using Shuttle.Core.Streams;
 
@@ -14,8 +12,6 @@ namespace Shuttle.Esb.Kafka
 {
     public class KafkaQueue : IQueue, ICreateQueue, IDropQueue, IPurgeQueue, IDisposable
     {
-        public static readonly string Scheme = "kafka";
-
         private readonly CancellationToken _cancellationToken;
         private IConsumer<Ignore, string> _consumer;
         private readonly KafkaOptions _kafkaOptions;
@@ -29,32 +25,17 @@ namespace Shuttle.Esb.Kafka
         private bool _disposed;
         private readonly ConsumerConfig _consumerConfig;
 
-        public KafkaQueue(Uri uri, IOptionsMonitor<KafkaOptions> kafkaOptions, CancellationToken cancellationToken)
+        public KafkaQueue(QueueUri uri, KafkaOptions kafkaOptions, CancellationToken cancellationToken)
         {
+            Guard.AgainstNull(uri, nameof(uri));
             Guard.AgainstNull(kafkaOptions, nameof(kafkaOptions));
             Guard.AgainstNull(cancellationToken, nameof(cancellationToken));
 
-            Uri = new QueueUri(uri);
-
-            Uri.SchemeInvariant(Scheme);
-
-            _cancellationToken = cancellationToken;
-            _kafkaOptions = kafkaOptions.Get(Uri.ConfigurationName);
-
-            if (_kafkaOptions == null)
-            {
-                throw new InvalidOperationException(string.Format(Resources.ConfigurationNameMissing, Uri.ConfigurationName));
-            }
-
+            Uri = uri;
             Topic = Uri.Queue;
 
-            var entryAssembly = Assembly.GetEntryAssembly();
-
-            if (entryAssembly == null)
-            {
-                throw new ArgumentNullException(nameof(entryAssembly));
-            }
-
+            _cancellationToken = cancellationToken;
+            _kafkaOptions = kafkaOptions;
             _operationTimeout = _kafkaOptions.OperationTimeout;
 
             _consumerConfig = new ConsumerConfig

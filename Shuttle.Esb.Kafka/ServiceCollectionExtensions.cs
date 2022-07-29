@@ -47,6 +47,16 @@ namespace Shuttle.Esb.Kafka
                     {
                         options.OperationTimeout = TimeSpan.FromMilliseconds(25);
                     }
+
+                    options.ConfigureConsumer += (sender, args) =>
+                    {
+                        pair.Value.OnConfigureConsumer(sender, args);
+                    };
+
+                    options.ConfigureProducer += (sender, args) =>
+                    {
+                        pair.Value.OnConfigureProducer(sender, args);
+                    };
                 });
             }
 

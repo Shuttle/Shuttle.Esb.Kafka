@@ -23,9 +23,17 @@ namespace Shuttle.Esb.Kafka
         {
             Guard.AgainstNull(uri, "uri");
 
-            return new KafkaQueue(uri, _kafkaOptions, _cancellationTokenSource.Get().Token);
+            var queueUri = new QueueUri(uri).SchemeInvariant(Scheme);
+            var kafkaOptions = _kafkaOptions.Get(queueUri.ConfigurationName);
+
+            if (kafkaOptions == null)
+            {
+                throw new InvalidOperationException(string.Format(Resources.QueueConfigurationNameException, queueUri.ConfigurationName));
+            }
+
+            return new KafkaQueue(queueUri, kafkaOptions, _cancellationTokenSource.Get().Token);
         }
 
-        public string Scheme => KafkaQueue.Scheme;
+        public string Scheme => "kafka";
     }
 }
