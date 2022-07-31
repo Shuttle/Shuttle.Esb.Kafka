@@ -1,4 +1,5 @@
 ﻿using System;
+using Confluent.Kafka;
 using Shuttle.Core.Contract;
 
 namespace Shuttle.Esb.Kafka
@@ -19,6 +20,8 @@ namespace Shuttle.Esb.Kafka
         public TimeSpan ConsumeTimeout { get; set; } = TimeSpan.FromSeconds(30);
         public TimeSpan OperationTimeout { get; set; } = TimeSpan.FromSeconds(30);
         public TimeSpan ConnectionsMaxIdle { get; set; }
+        public Acks Acks { get; set; } = Acks.All;
+        public bool EnableIdempotence { get; set; } = true;
 
         public event EventHandler<ConfigureConsumerEventArgs> ConfigureConsumer = delegate
         {

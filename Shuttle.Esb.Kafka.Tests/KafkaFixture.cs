@@ -36,9 +36,6 @@ namespace Shuttle.Esb.Kafka.Tests
                 var kafkaOptions = new KafkaOptions
                 {
                     BootstrapServers = "localhost:9092",
-                    EnableAutoCommit = false,
-                    EnableAutoOffsetStore = false,
-                    FlushEnqueue = true,
                     UseCancellationToken = useCancellationToken,
                     ConsumeTimeout = TimeSpan.FromSeconds(5),
                     ConnectionsMaxIdle = TimeSpan.FromSeconds(5)

@@ -56,10 +56,10 @@ namespace Shuttle.Esb.Kafka
             {
                 BootstrapServers = _kafkaOptions.BootstrapServers,
                 ClientId = Dns.GetHostName(),
-                Acks = Acks.All,
+                Acks = _kafkaOptions.Acks,
                 MessageSendMaxRetries = _kafkaOptions.MessageSendMaxRetries,
                 RetryBackoffMs = (int)_kafkaOptions.RetryBackoff.TotalMilliseconds,
-                EnableIdempotence = true,
+                EnableIdempotence = _kafkaOptions.EnableIdempotence,
                 ConnectionsMaxIdleMs = (int)_kafkaOptions.ConnectionsMaxIdle.TotalMilliseconds
             };
 
@@ -259,7 +259,6 @@ namespace Shuttle.Esb.Kafka
             }
 
             ConsumeResult<Ignore, string> consumeResult = null;
-
 
             try
             {
