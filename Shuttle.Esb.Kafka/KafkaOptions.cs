@@ -19,7 +19,7 @@ namespace Shuttle.Esb.Kafka
         public bool UseCancellationToken { get; set; } = true;
         public TimeSpan ConsumeTimeout { get; set; } = TimeSpan.FromSeconds(30);
         public TimeSpan OperationTimeout { get; set; } = TimeSpan.FromSeconds(30);
-        public TimeSpan ConnectionsMaxIdle { get; set; }
+        public TimeSpan ConnectionsMaxIdle { get; set; } = TimeSpan.Zero;
         public Acks Acks { get; set; } = Acks.All;
         public bool EnableIdempotence { get; set; } = true;
 
