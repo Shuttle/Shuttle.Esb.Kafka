@@ -6,7 +6,7 @@ namespace Shuttle.Esb.Kafka
 {
     public class KafkaOptions
     {
-        public const string SectionName = "Shuttle:ServiceBus:Kafka";
+        public const string SectionName = "Shuttle:Kafka";
 
         public string BootstrapServers { get; set; }
         public short ReplicationFactor { get; set; } = 1;
