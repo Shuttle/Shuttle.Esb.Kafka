@@ -27,7 +27,15 @@ namespace Shuttle.Esb.Kafka
         {
         };
 
+        public event EventHandler<BuildConsumerEventArgs> BuildConsumer = delegate
+        {
+        };
+
         public event EventHandler<ConfigureProducerEventArgs> ConfigureProducer = delegate
+        {
+        };
+
+        public event EventHandler<BuildProducerEventArgs> BuildProducer = delegate
         {
         };
 
@@ -39,12 +47,28 @@ namespace Shuttle.Esb.Kafka
             ConfigureConsumer.Invoke(sender, args);
         }
 
+        public void OnBuildConsumer(object sender, BuildConsumerEventArgs args)
+        {
+            Guard.AgainstNull(sender, nameof(sender));
+            Guard.AgainstNull(args, nameof(args));
+
+            BuildConsumer.Invoke(sender, args);
+        }
+
         public void OnConfigureProducer(object sender, ConfigureProducerEventArgs args)
         {
             Guard.AgainstNull(sender, nameof(sender));
             Guard.AgainstNull(args, nameof(args));
 
             ConfigureProducer.Invoke(sender, args);
+        }
+
+        public void OnBuildProducer(object sender, BuildProducerEventArgs args)
+        {
+            Guard.AgainstNull(sender, nameof(sender));
+            Guard.AgainstNull(args, nameof(args));
+
+            BuildProducer.Invoke(sender, args);
         }
     }
 }
