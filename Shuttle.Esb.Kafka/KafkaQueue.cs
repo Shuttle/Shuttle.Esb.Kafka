@@ -8,6 +8,7 @@ using Confluent.Kafka;
 using Confluent.Kafka.Admin;
 using Shuttle.Core.Contract;
 using Shuttle.Core.Streams;
+using Exception = System.Exception;
 
 namespace Shuttle.Esb.Kafka
 {
@@ -79,11 +80,22 @@ namespace Shuttle.Esb.Kafka
 
         public string Topic { get; }
 
-        public async Task Create()
+        public void Create()
         {
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            CreateAsync().GetAwaiter().GetResult();
+        }
 
-            OperationStarting.Invoke(this, new OperationEventArgs("Create"));
+        public async Task CreateAsync()
+        {
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                Operation?.Invoke(this, new OperationEventArgs("[create/cancelled]"));
+                return;
+            }
+
+            Operation?.Invoke(this, new OperationEventArgs("[create/starting]"));
+
+            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
             try
             {
@@ -92,15 +104,15 @@ namespace Shuttle.Esb.Kafka
                            BootstrapServers = _consumerConfig.BootstrapServers
                        }).Build())
                 {
-                    OperationStarting.Invoke(this, new OperationEventArgs("Create.GetMetadata"));
+                    Operation?.Invoke(this, new OperationEventArgs("[create.get-metadata/starting]"));
 
                     var metadata = client.GetMetadata(Topic, _operationTimeout);
 
-                    OperationCompleted.Invoke(this, new OperationEventArgs("Create.GetMetadata"));
+                    Operation?.Invoke(this, new OperationEventArgs("[create.get-metadata/completed]"));
 
                     if (metadata == null)
                     {
-                        OperationStarting.Invoke(this, new OperationEventArgs("Create.CreateTopicsAsync"));
+                        Operation?.Invoke(this, new OperationEventArgs("[create.create-topics/starting]"));
 
                         await client.CreateTopicsAsync(new[]
                         {
@@ -112,11 +124,15 @@ namespace Shuttle.Esb.Kafka
                             }
                         }).ConfigureAwait(false);
 
-                        OperationCompleted.Invoke(this, new OperationEventArgs("Create.CreateTopicsAsync"));
+                        Operation?.Invoke(this, new OperationEventArgs("[create.create-topics/completed]"));
                     }
 
-                    OperationCompleted.Invoke(this, new OperationEventArgs("Create"));
+                    Operation?.Invoke(this, new OperationEventArgs("[create/completed]"));
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                Operation?.Invoke(this, new OperationEventArgs("[create/cancelled]"));
             }
             finally
             {
@@ -137,48 +153,40 @@ namespace Shuttle.Esb.Kafka
 
                 try
                 {
-                    OperationStarting.Invoke(this, new OperationEventArgs("Dispose.Producer.Flush"));
-
+                    Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.flush/starting]"));
                     _producer?.Flush(_operationTimeout);
-
-                    OperationCompleted.Invoke(this, new OperationEventArgs("Dispose.Producer.Flush"));
+                    Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.flush/completed]"));
                 }
-                catch
+                catch(Exception ex)
                 {
                     // ignore
+                    Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.flush/exception]", ex));
                 }
 
-                OperationStarting.Invoke(this, new OperationEventArgs("Dispose.Producer.Dispose"));
-
+                Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.dispose/starting]"));
                 _producer?.Dispose();
                 _producer = null;
-
-                OperationCompleted.Invoke(this, new OperationEventArgs("Dispose.Producer.Dispose"));
+                Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.dispose/completed]"));
 
                 try
                 {
-                    OperationStarting.Invoke(this, new OperationEventArgs("Dispose.Consumer.Unsubscribe"));
-
+                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.unsubscribe/starting]"));
                     _consumer?.Unsubscribe();
+                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.unsubscribe/completed]"));
 
-                    OperationCompleted.Invoke(this, new OperationEventArgs("Dispose.Consumer.Unsubscribe"));
-                    OperationStarting.Invoke(this, new OperationEventArgs("Dispose.Consumer.Close"));
-
+                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.close/starting]"));
                     _consumer?.Close();
-
-                    OperationCompleted.Invoke(this, new OperationEventArgs("Dispose.Consumer.Close"));
+                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.close/completed]"));
                 }
                 catch
                 {
                     // ignore
                 }
 
-                OperationStarting.Invoke(this, new OperationEventArgs("Dispose.Consumer.Dispose"));
-
+                Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.dispose/starting]")); 
                 _consumer?.Dispose();
                 _consumer = null;
-
-                OperationCompleted.Invoke(this, new OperationEventArgs("Dispose.Consumer.Dispose"));
+                Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.dispose/starting]"));
 
                 _disposed = true;
             }
@@ -188,11 +196,22 @@ namespace Shuttle.Esb.Kafka
             }
         }
 
-        public async Task Drop()
+        public void Drop()
         {
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            DropAsync().GetAwaiter().GetResult();
+        }
 
-            OperationStarting.Invoke(this, new OperationEventArgs("Drop"));
+        public async Task DropAsync()
+        {
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                Operation?.Invoke(this, new OperationEventArgs("[drop/cancelled]"));
+                return;
+            }
+
+            Operation?.Invoke(this, new OperationEventArgs("[drop/starting]"));
+
+            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
             try
             {
@@ -214,8 +233,6 @@ namespace Shuttle.Esb.Kafka
                         {
                             Topic
                         }, new DeleteTopicsOptions { OperationTimeout = _operationTimeout }).ConfigureAwait(false);
-
-                        OperationCompleted.Invoke(this, new OperationEventArgs("Drop"));
                     }
                     catch (DeleteTopicsException)
                     {
@@ -225,26 +242,42 @@ namespace Shuttle.Esb.Kafka
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                Operation?.Invoke(this, new OperationEventArgs("[drop/cancelled]"));
+            }
             finally
             {
                 _lock.Release();
             }
+
+            Operation?.Invoke(this, new OperationEventArgs("[drop/completed]"));
         }
 
-        public async Task Purge()
+        public void Purge()
         {
-            OperationStarting.Invoke(this, new OperationEventArgs("Purge"));
+            PurgeAsync().GetAwaiter().GetResult();
+        }
 
-            await Drop();
-            await Create();
+        public async Task PurgeAsync()
+        {
+            Operation?.Invoke(this, new OperationEventArgs("[purge/starting]"));
 
-            OperationCompleted.Invoke(this, new OperationEventArgs("Purge"));
+            await DropAsync();
+            await CreateAsync();
+
+            Operation?.Invoke(this, new OperationEventArgs("[purge/completed]"));
         }
 
         public QueueUri Uri { get; }
         public bool IsStream => true;
 
-        public async Task Acknowledge(object acknowledgementToken)
+        public void Acknowledge(object acknowledgementToken)
+        {
+            AcknowledgeAsync(acknowledgementToken).GetAwaiter().GetResult();
+        }
+
+        public async Task AcknowledgeAsync(object acknowledgementToken)
         {
             Guard.AgainstNull(acknowledgementToken, nameof(acknowledgementToken));
 
@@ -273,7 +306,7 @@ namespace Shuttle.Esb.Kafka
                     }
                 }
 
-                MessageAcknowledged.Invoke(this, new MessageAcknowledgedEventArgs(acknowledgementToken));
+                MessageAcknowledged?.Invoke(this, new MessageAcknowledgedEventArgs(acknowledgementToken));
             }
             finally
             {
@@ -281,9 +314,24 @@ namespace Shuttle.Esb.Kafka
             }
         }
 
-        public async Task Enqueue(TransportMessage message, Stream stream)
+        public void Release(object acknowledgementToken)
         {
-            Guard.AgainstNull(message, nameof(message));
+            ReleaseAsync(acknowledgementToken).GetAwaiter().GetResult();
+        }
+
+        public void Enqueue(TransportMessage transportMessage, Stream stream)
+        {
+            EnqueueAsync(transportMessage, stream, true).GetAwaiter().GetResult();
+        }
+
+        public async Task EnqueueAsync(TransportMessage transportMessage, Stream stream)
+        {
+            await EnqueueAsync(transportMessage, stream,false).ConfigureAwait(false);
+        }
+
+        private async Task EnqueueAsync(TransportMessage transportMessage, Stream stream, bool sync)
+        {
+            Guard.AgainstNull(transportMessage, nameof(transportMessage));
             Guard.AgainstNull(stream, nameof(stream));
 
             await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
@@ -295,11 +343,22 @@ namespace Shuttle.Esb.Kafka
                     return;
                 }
 
-                await _producer.ProduceAsync(Topic,
-                    new Message<Null, string>
-                    {
-                        Value = Convert.ToBase64String(await stream.ToBytesAsync().ConfigureAwait(false))
-                    }, _cancellationToken).ConfigureAwait(false);
+                if (sync)
+                {
+                    _producer.Produce(Topic,
+                        new Message<Null, string>
+                        {
+                            Value = Convert.ToBase64String(stream.ToBytes())
+                        });
+                }
+                else
+                {
+                    await _producer.ProduceAsync(Topic,
+                        new Message<Null, string>
+                        {
+                            Value = Convert.ToBase64String(await stream.ToBytesAsync().ConfigureAwait(false))
+                        }, _cancellationToken).ConfigureAwait(false);
+                }
 
                 if (!_kafkaOptions.FlushEnqueue)
                 {
@@ -321,7 +380,7 @@ namespace Shuttle.Esb.Kafka
                     _producer.Flush(_operationTimeout);
                 }
 
-                MessageEnqueued.Invoke(this, new MessageEnqueuedEventArgs(message, stream));
+                MessageEnqueued?.Invoke(this, new MessageEnqueuedEventArgs(transportMessage, stream));
             }
             catch (OperationCanceledException)
             {
@@ -332,7 +391,12 @@ namespace Shuttle.Esb.Kafka
             }
         }
 
-        public async Task<ReceivedMessage> GetMessage()
+        public ReceivedMessage GetMessage()
+        {
+            return GetMessageAsync().GetAwaiter().GetResult();
+        }
+
+        public async Task<ReceivedMessage> GetMessageAsync()
         {
             await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
@@ -354,7 +418,7 @@ namespace Shuttle.Esb.Kafka
 
                 if (receivedMessage != null)
                 {
-                    MessageReceived.Invoke(this, new MessageReceivedEventArgs(receivedMessage));
+                    MessageReceived?.Invoke(this, new MessageReceivedEventArgs(receivedMessage));
                 }
 
                 return receivedMessage;
@@ -365,11 +429,22 @@ namespace Shuttle.Esb.Kafka
             }
         }
 
-        public async ValueTask<bool> IsEmpty()
+        public bool IsEmpty()
         {
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            return IsEmptyAsync().GetAwaiter().GetResult();
+        }
 
-            OperationStarting.Invoke(this, new OperationEventArgs("IsEmpty"));
+        public async ValueTask<bool> IsEmptyAsync()
+        {
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                Operation?.Invoke(this, new OperationEventArgs("[is-empty/cancelled]", true));
+                return true;
+            }
+
+            Operation?.Invoke(this, new OperationEventArgs("[is-empty/starting]"));
+
+            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
             try
             {
@@ -382,17 +457,23 @@ namespace Shuttle.Esb.Kafka
 
                 var result = _receivedMessages.Count == 0;
 
-                OperationCompleted.Invoke(this, new OperationEventArgs("IsEmpty", result));
+                Operation?.Invoke(this, new OperationEventArgs("[is-empty]", result));
 
                 return result;
+            }
+            catch (OperationCanceledException)
+            {
+                Operation?.Invoke(this, new OperationEventArgs("[is-empty/cancelled]", true));
             }
             finally
             {
                 _lock.Release();
             }
+
+            return true;
         }
 
-        public async Task Release(object acknowledgementToken)
+        public async Task ReleaseAsync(object acknowledgementToken)
         {
             await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
@@ -409,7 +490,7 @@ namespace Shuttle.Esb.Kafka
                     new MemoryStream(Convert.FromBase64String(token.ConsumeResult.Message.Value)),
                     acknowledgementToken));
 
-                MessageReleased.Invoke(this, new MessageReleasedEventArgs(acknowledgementToken));
+                MessageReleased?.Invoke(this, new MessageReleasedEventArgs(acknowledgementToken));
             }
             finally
             {
@@ -417,29 +498,11 @@ namespace Shuttle.Esb.Kafka
             }
         }
 
-        public event EventHandler<MessageEnqueuedEventArgs> MessageEnqueued = delegate
-        {
-        };
-
-        public event EventHandler<MessageAcknowledgedEventArgs> MessageAcknowledged = delegate
-        {
-        };
-
-        public event EventHandler<MessageReleasedEventArgs> MessageReleased = delegate
-        {
-        };
-
-        public event EventHandler<MessageReceivedEventArgs> MessageReceived = delegate
-        {
-        };
-
-        public event EventHandler<OperationEventArgs> OperationStarting = delegate
-        {
-        };
-
-        public event EventHandler<OperationEventArgs> OperationCompleted = delegate
-        {
-        };
+        public event EventHandler<MessageEnqueuedEventArgs> MessageEnqueued;
+        public event EventHandler<MessageAcknowledgedEventArgs> MessageAcknowledged;
+        public event EventHandler<MessageReleasedEventArgs> MessageReleased;
+        public event EventHandler<MessageReceivedEventArgs> MessageReceived;
+        public event EventHandler<OperationEventArgs> Operation;
 
         private void ReadMessage()
         {
