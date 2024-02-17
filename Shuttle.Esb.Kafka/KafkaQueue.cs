@@ -343,22 +343,16 @@ namespace Shuttle.Esb.Kafka
                     return;
                 }
 
-                if (sync)
-                {
-                    _producer.Produce(Topic,
-                        new Message<Null, string>
-                        {
-                            Value = Convert.ToBase64String(stream.ToBytes())
-                        });
-                }
-                else
-                {
-                    await _producer.ProduceAsync(Topic,
-                        new Message<Null, string>
-                        {
-                            Value = Convert.ToBase64String(await stream.ToBytesAsync().ConfigureAwait(false))
-                        }, _cancellationToken).ConfigureAwait(false);
-                }
+                var value = sync 
+                    ? Convert.ToBase64String(stream.ToBytes()) 
+                    : Convert.ToBase64String(await stream.ToBytesAsync().ConfigureAwait(false));
+
+                // always use `Produce` as `ProduceAsync` waits the `DeliveryReport` to be produced, which slows down message sending
+                _producer.Produce(Topic,
+                    new Message<Null, string>
+                    {
+                        Value = value
+                    });
 
                 if (!_kafkaOptions.FlushEnqueue)
                 {
