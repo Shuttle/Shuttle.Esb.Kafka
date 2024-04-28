@@ -347,7 +347,7 @@ namespace Shuttle.Esb.Kafka
                     ? Convert.ToBase64String(stream.ToBytes()) 
                     : Convert.ToBase64String(await stream.ToBytesAsync().ConfigureAwait(false));
 
-                // always use `Produce` as `ProduceAsync` waits the `DeliveryReport` to be produced, which slows down message sending
+                // always use `Produce` as `ProduceAsync` waits for the `DeliveryReport` to be produced, which slows down message sending
                 _producer.Produce(Topic,
                     new Message<Null, string>
                     {
