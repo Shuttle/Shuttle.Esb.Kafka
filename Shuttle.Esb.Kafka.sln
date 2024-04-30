@@ -9,6 +9,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Shuttle.Esb.Kafka.Tests", "
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{13B650D8-75AE-47C4-A34A-ADDFDE1A1E33}"
 	ProjectSection(SolutionItems) = preProject
+		docker-compose-up.cmd = docker-compose-up.cmd
 		docker-compose.yml = docker-compose.yml
 		LICENSE = LICENSE
 		README.md = README.md
