@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Confluent.Kafka" Version="2.5.0" />
+    <PackageReference Include="Confluent.Kafka" Version="2.5.1" />
     <PackageReference Include="Shuttle.Esb" Version="15.0.0" />
   </ItemGroup>
 
