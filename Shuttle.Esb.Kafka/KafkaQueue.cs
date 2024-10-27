@@ -10,540 +10,489 @@ using Shuttle.Core.Contract;
 using Shuttle.Core.Streams;
 using Exception = System.Exception;
 
-namespace Shuttle.Esb.Kafka
+namespace Shuttle.Esb.Kafka;
+
+public class KafkaQueue : IQueue, ICreateQueue, IDropQueue, IPurgeQueue, IDisposable
 {
-    public class KafkaQueue : IQueue, ICreateQueue, IDropQueue, IPurgeQueue, IDisposable
+    private readonly CancellationToken _cancellationToken;
+    private readonly ConsumerConfig _consumerConfig;
+    private readonly KafkaOptions _kafkaOptions;
+
+    private readonly SemaphoreSlim _lock = new(1, 1);
+
+    private readonly TimeSpan _operationTimeout;
+    private readonly Queue<ReceivedMessage> _receivedMessages = new();
+    private readonly IConsumer<Ignore, string> _consumer;
+    private readonly IProducer<Null, string> _producer;
+    private bool _subscribed;
+
+    private bool _disposed;
+
+    public KafkaQueue(QueueUri uri, KafkaOptions kafkaOptions, CancellationToken cancellationToken)
     {
-        private readonly CancellationToken _cancellationToken;
-        private readonly ConsumerConfig _consumerConfig;
-        private readonly KafkaOptions _kafkaOptions;
+        Uri = Guard.AgainstNull(uri);
+        Topic = Uri.QueueName;
 
-        private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
+        _cancellationToken = Guard.AgainstNull(cancellationToken);
+        _kafkaOptions = Guard.AgainstNull(kafkaOptions);
+        _operationTimeout = _kafkaOptions.OperationTimeout;
 
-        private readonly TimeSpan _operationTimeout;
-        private readonly Queue<ReceivedMessage> _receivedMessages = new Queue<ReceivedMessage>();
-        private IConsumer<Ignore, string> _consumer;
-        private bool _disposed;
-        private IProducer<Null, string> _producer;
-        private bool _subscribed;
-
-        public KafkaQueue(QueueUri uri, KafkaOptions kafkaOptions, CancellationToken cancellationToken)
+        _consumerConfig = new()
         {
-            Guard.AgainstNull(uri, nameof(uri));
-            Guard.AgainstNull(kafkaOptions, nameof(kafkaOptions));
-            Guard.AgainstNull(cancellationToken, nameof(cancellationToken));
+            BootstrapServers = _kafkaOptions.BootstrapServers,
+            GroupId = Topic,
+            AutoOffsetReset = AutoOffsetReset.Earliest,
+            EnableAutoCommit = _kafkaOptions.EnableAutoCommit,
+            EnableAutoOffsetStore = _kafkaOptions.EnableAutoOffsetStore,
+            ConnectionsMaxIdleMs = (int)_kafkaOptions.ConnectionsMaxIdle.TotalMilliseconds
+        };
 
-            Uri = uri;
-            Topic = Uri.QueueName;
+        _kafkaOptions.OnConfigureConsumer(this, new(_consumerConfig));
 
-            _cancellationToken = cancellationToken;
-            _kafkaOptions = kafkaOptions;
-            _operationTimeout = _kafkaOptions.OperationTimeout;
+        var consumerBuilder = new ConsumerBuilder<Ignore, string>(_consumerConfig);
 
-            _consumerConfig = new ConsumerConfig
-            {
-                BootstrapServers = _kafkaOptions.BootstrapServers,
-                GroupId = Topic,
-                AutoOffsetReset = AutoOffsetReset.Earliest,
-                EnableAutoCommit = _kafkaOptions.EnableAutoCommit,
-                EnableAutoOffsetStore = _kafkaOptions.EnableAutoOffsetStore,
-                ConnectionsMaxIdleMs = (int)_kafkaOptions.ConnectionsMaxIdle.TotalMilliseconds,
-            };
+        _kafkaOptions.OnBuildConsumer(this, new(consumerBuilder));
 
-            _kafkaOptions.OnConfigureConsumer(this, new ConfigureConsumerEventArgs(_consumerConfig));
+        _consumer = consumerBuilder.Build();
 
-            var consumerBuilder = new ConsumerBuilder<Ignore, string>(_consumerConfig);
+        var producerConfig = new ProducerConfig
+        {
+            BootstrapServers = _kafkaOptions.BootstrapServers,
+            ClientId = Dns.GetHostName(),
+            Acks = _kafkaOptions.Acks,
+            MessageSendMaxRetries = _kafkaOptions.MessageSendMaxRetries,
+            RetryBackoffMs = (int)_kafkaOptions.RetryBackoff.TotalMilliseconds,
+            EnableIdempotence = _kafkaOptions.EnableIdempotence,
+            ConnectionsMaxIdleMs = (int)_kafkaOptions.ConnectionsMaxIdle.TotalMilliseconds
+        };
 
-            _kafkaOptions.OnBuildConsumer(this, new BuildConsumerEventArgs(consumerBuilder));
+        _kafkaOptions.OnConfigureProducer(this, new(producerConfig));
 
-            _consumer = consumerBuilder.Build();
+        var producerBuilder = new ProducerBuilder<Null, string>(producerConfig);
 
-            var producerConfig = new ProducerConfig
-            {
-                BootstrapServers = _kafkaOptions.BootstrapServers,
-                ClientId = Dns.GetHostName(),
-                Acks = _kafkaOptions.Acks,
-                MessageSendMaxRetries = _kafkaOptions.MessageSendMaxRetries,
-                RetryBackoffMs = (int)_kafkaOptions.RetryBackoff.TotalMilliseconds,
-                EnableIdempotence = _kafkaOptions.EnableIdempotence,
-                ConnectionsMaxIdleMs = (int)_kafkaOptions.ConnectionsMaxIdle.TotalMilliseconds
-            };
+        _kafkaOptions.OnBuildProducer(this, new(producerBuilder));
 
-            _kafkaOptions.OnConfigureProducer(this, new ConfigureProducerEventArgs(producerConfig));
+        _producer = producerBuilder.Build();
+    }
 
-            var producerBuilder = new ProducerBuilder<Null, string>(producerConfig);
+    public string Topic { get; }
 
-            _kafkaOptions.OnBuildProducer(this, new BuildProducerEventArgs(producerBuilder));
-
-            _producer = producerBuilder.Build();
+    public async Task CreateAsync()
+    {
+        if (_cancellationToken.IsCancellationRequested)
+        {
+            Operation?.Invoke(this, new("[create/cancelled]"));
+            return;
         }
 
-        public string Topic { get; }
+        Operation?.Invoke(this, new("[create/starting]"));
 
-        public void Create()
-        {
-            CreateAsync().GetAwaiter().GetResult();
-        }
+        await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
-        public async Task CreateAsync()
+        try
         {
-            if (_cancellationToken.IsCancellationRequested)
+            using (var client = new AdminClientBuilder(new AdminClientConfig
+                   {
+                       BootstrapServers = _consumerConfig.BootstrapServers
+                   }).Build())
             {
-                Operation?.Invoke(this, new OperationEventArgs("[create/cancelled]"));
+                Operation?.Invoke(this, new("[create.get-metadata/starting]"));
+
+                var metadata = client.GetMetadata(Topic, _operationTimeout);
+
+                Operation?.Invoke(this, new("[create.get-metadata/completed]"));
+
+                if (metadata == null)
+                {
+                    Operation?.Invoke(this, new("[create.create-topics/starting]"));
+
+                    await client.CreateTopicsAsync(new[]
+                    {
+                        new TopicSpecification
+                        {
+                            Name = Topic,
+                            ReplicationFactor = _kafkaOptions.ReplicationFactor,
+                            NumPartitions = _kafkaOptions.NumPartitions
+                        }
+                    }).ConfigureAwait(false);
+
+                    Operation?.Invoke(this, new("[create.create-topics/completed]"));
+                }
+
+                Operation?.Invoke(this, new("[create/completed]"));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Operation?.Invoke(this, new("[create/cancelled]"));
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public void Dispose()
+    {
+        _lock.Wait(CancellationToken.None);
+
+        try
+        {
+            if (_disposed)
+            {
                 return;
             }
 
-            Operation?.Invoke(this, new OperationEventArgs("[create/starting]"));
+            try
+            {
+                Operation?.Invoke(this, new("[dispose.producer.flush/starting]"));
+                _producer.Flush(_operationTimeout);
+                Operation?.Invoke(this, new("[dispose.producer.flush/completed]"));
+            }
+            catch (Exception ex)
+            {
+                // ignore
+                Operation?.Invoke(this, new("[dispose.producer.flush/exception]", ex));
+            }
 
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            Operation?.Invoke(this, new("[dispose.producer.dispose/starting]"));
+            _producer.Dispose();
+            Operation?.Invoke(this, new("[dispose.producer.dispose/completed]"));
 
             try
             {
-                using (var client = new AdminClientBuilder(new AdminClientConfig
-                       {
-                           BootstrapServers = _consumerConfig.BootstrapServers
-                       }).Build())
-                {
-                    Operation?.Invoke(this, new OperationEventArgs("[create.get-metadata/starting]"));
+                Operation?.Invoke(this, new("[dispose.consumer.unsubscribe/starting]"));
+                _consumer.Unsubscribe();
+                Operation?.Invoke(this, new("[dispose.consumer.unsubscribe/completed]"));
 
-                    var metadata = client.GetMetadata(Topic, _operationTimeout);
-
-                    Operation?.Invoke(this, new OperationEventArgs("[create.get-metadata/completed]"));
-
-                    if (metadata == null)
-                    {
-                        Operation?.Invoke(this, new OperationEventArgs("[create.create-topics/starting]"));
-
-                        await client.CreateTopicsAsync(new[]
-                        {
-                            new TopicSpecification
-                            {
-                                Name = Topic,
-                                ReplicationFactor = _kafkaOptions.ReplicationFactor,
-                                NumPartitions = _kafkaOptions.NumPartitions
-                            }
-                        }).ConfigureAwait(false);
-
-                        Operation?.Invoke(this, new OperationEventArgs("[create.create-topics/completed]"));
-                    }
-
-                    Operation?.Invoke(this, new OperationEventArgs("[create/completed]"));
-                }
+                Operation?.Invoke(this, new("[dispose.consumer.close/starting]"));
+                _consumer.Close();
+                Operation?.Invoke(this, new("[dispose.consumer.close/completed]"));
             }
-            catch (OperationCanceledException)
+            catch
             {
-                Operation?.Invoke(this, new OperationEventArgs("[create/cancelled]"));
+                // ignore
             }
-            finally
-            {
-                _lock.Release();
-            }
+
+            Operation?.Invoke(this, new("[dispose.consumer.dispose/starting]"));
+            _consumer.Dispose();
+            Operation?.Invoke(this, new("[dispose.consumer.dispose/starting]"));
+
+            _disposed = true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task DropAsync()
+    {
+        if (_cancellationToken.IsCancellationRequested)
+        {
+            Operation?.Invoke(this, new("[drop/cancelled]"));
+            return;
         }
 
-        public void Dispose()
-        {
-            _lock.Wait(CancellationToken.None);
+        Operation?.Invoke(this, new("[drop/starting]"));
 
-            try
+        await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        try
+        {
+            using (var client = new AdminClientBuilder(new AdminClientConfig
+                   {
+                       BootstrapServers = _kafkaOptions.BootstrapServers
+                   }).Build())
             {
-                if (_disposed)
+                var metadata = client.GetMetadata(Topic, _operationTimeout);
+
+                if (metadata == null)
                 {
                     return;
                 }
 
                 try
                 {
-                    Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.flush/starting]"));
-                    _producer?.Flush(_operationTimeout);
-                    Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.flush/completed]"));
+                    await client.DeleteTopicsAsync(new List<string>
+                    {
+                        Topic
+                    }, new() { OperationTimeout = _operationTimeout }).ConfigureAwait(false);
                 }
-                catch(Exception ex)
+                catch (DeleteTopicsException)
                 {
-                    // ignore
-                    Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.flush/exception]", ex));
                 }
-
-                Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.dispose/starting]"));
-                _producer?.Dispose();
-                _producer = null;
-                Operation?.Invoke(this, new OperationEventArgs("[dispose.producer.dispose/completed]"));
-
-                try
+                catch (AggregateException ex) when (ex.InnerException is DeleteTopicsException)
                 {
-                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.unsubscribe/starting]"));
-                    _consumer?.Unsubscribe();
-                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.unsubscribe/completed]"));
-
-                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.close/starting]"));
-                    _consumer?.Close();
-                    Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.close/completed]"));
                 }
-                catch
-                {
-                    // ignore
-                }
-
-                Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.dispose/starting]")); 
-                _consumer?.Dispose();
-                _consumer = null;
-                Operation?.Invoke(this, new OperationEventArgs("[dispose.consumer.dispose/starting]"));
-
-                _disposed = true;
-            }
-            finally
-            {
-                _lock.Release();
             }
         }
-
-        public void Drop()
+        catch (OperationCanceledException)
         {
-            DropAsync().GetAwaiter().GetResult();
+            Operation?.Invoke(this, new("[drop/cancelled]"));
+        }
+        finally
+        {
+            _lock.Release();
         }
 
-        public async Task DropAsync()
+        Operation?.Invoke(this, new("[drop/completed]"));
+    }
+
+    public async Task PurgeAsync()
+    {
+        Operation?.Invoke(this, new("[purge/starting]"));
+
+        await DropAsync();
+        await CreateAsync();
+
+        Operation?.Invoke(this, new("[purge/completed]"));
+    }
+
+    public QueueUri Uri { get; }
+    public bool IsStream => true;
+
+    public async Task AcknowledgeAsync(object acknowledgementToken)
+    {
+        if (Guard.AgainstNull(acknowledgementToken) is not AcknowledgementToken token)
         {
-            if (_cancellationToken.IsCancellationRequested)
+            return;
+        }
+
+        await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        try
+        {
+            if (_disposed)
             {
-                Operation?.Invoke(this, new OperationEventArgs("[drop/cancelled]"));
                 return;
             }
 
-            Operation?.Invoke(this, new OperationEventArgs("[drop/starting]"));
-
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-
-            try
+            if (!(_consumerConfig.EnableAutoCommit ?? false) &&
+                !(_consumerConfig.EnableAutoOffsetStore ?? false))
             {
-                using (var client = new AdminClientBuilder(new AdminClientConfig
-                       {
-                           BootstrapServers = _kafkaOptions.BootstrapServers
-                       }).Build())
+                if (!(_consumerConfig.EnableAutoCommit ?? false))
                 {
-                    var metadata = client.GetMetadata(Topic, _operationTimeout);
-
-                    if (metadata == null)
-                    {
-                        return;
-                    }
-
-                    try
-                    {
-                        await client.DeleteTopicsAsync(new List<string>
-                        {
-                            Topic
-                        }, new DeleteTopicsOptions { OperationTimeout = _operationTimeout }).ConfigureAwait(false);
-                    }
-                    catch (DeleteTopicsException)
-                    {
-                    }
-                    catch (AggregateException ex) when (ex.InnerException is DeleteTopicsException)
-                    {
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                Operation?.Invoke(this, new OperationEventArgs("[drop/cancelled]"));
-            }
-            finally
-            {
-                _lock.Release();
-            }
-
-            Operation?.Invoke(this, new OperationEventArgs("[drop/completed]"));
-        }
-
-        public void Purge()
-        {
-            PurgeAsync().GetAwaiter().GetResult();
-        }
-
-        public async Task PurgeAsync()
-        {
-            Operation?.Invoke(this, new OperationEventArgs("[purge/starting]"));
-
-            await DropAsync();
-            await CreateAsync();
-
-            Operation?.Invoke(this, new OperationEventArgs("[purge/completed]"));
-        }
-
-        public QueueUri Uri { get; }
-        public bool IsStream => true;
-
-        public void Acknowledge(object acknowledgementToken)
-        {
-            AcknowledgeAsync(acknowledgementToken).GetAwaiter().GetResult();
-        }
-
-        public async Task AcknowledgeAsync(object acknowledgementToken)
-        {
-            Guard.AgainstNull(acknowledgementToken, nameof(acknowledgementToken));
-
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-
-            try
-            {
-                if (_disposed)
-                {
-                    return;
+                    _consumer.Commit(token.ConsumeResult);
                 }
 
-                if (!(_consumerConfig.EnableAutoCommit ?? false) &&
-                    !(_consumerConfig.EnableAutoOffsetStore ?? false))
+                if (!(_consumerConfig.EnableAutoOffsetStore ?? false))
                 {
-                    var token = (AcknowledgementToken)acknowledgementToken;
-
-                    if (!(_consumerConfig.EnableAutoCommit ?? false))
-                    {
-                        _consumer.Commit(token.ConsumeResult);
-                    }
-
-                    if (!(_consumerConfig.EnableAutoOffsetStore ?? false))
-                    {
-                        _consumer.StoreOffset(token.ConsumeResult);
-                    }
+                    _consumer.StoreOffset(token.ConsumeResult);
                 }
+            }
 
-                MessageAcknowledged?.Invoke(this, new MessageAcknowledgedEventArgs(acknowledgementToken));
-            }
-            finally
-            {
-                _lock.Release();
-            }
+            MessageAcknowledged?.Invoke(this, new(acknowledgementToken));
         }
-
-        public void Release(object acknowledgementToken)
+        finally
         {
-            ReleaseAsync(acknowledgementToken).GetAwaiter().GetResult();
+            _lock.Release();
         }
+    }
 
-        public void Enqueue(TransportMessage transportMessage, Stream stream)
+    public async Task<ReceivedMessage?> GetMessageAsync()
+    {
+        await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        try
         {
-            EnqueueAsync(transportMessage, stream, true).GetAwaiter().GetResult();
+            if (_disposed)
+            {
+                return null;
+            }
+
+            if (_receivedMessages.Count > 0)
+            {
+                return _receivedMessages.Dequeue();
+            }
+
+            ReadMessage();
+
+            var receivedMessage = _receivedMessages.Count > 0 ? _receivedMessages.Dequeue() : null;
+
+            if (receivedMessage != null)
+            {
+                MessageReceived?.Invoke(this, new(receivedMessage));
+            }
+
+            return receivedMessage;
         }
-
-        public async Task EnqueueAsync(TransportMessage transportMessage, Stream stream)
+        finally
         {
-            await EnqueueAsync(transportMessage, stream,false).ConfigureAwait(false);
+            _lock.Release();
         }
+    }
 
-        private async Task EnqueueAsync(TransportMessage transportMessage, Stream stream, bool sync)
+    public async ValueTask<bool> IsEmptyAsync()
+    {
+        if (_cancellationToken.IsCancellationRequested)
         {
-            Guard.AgainstNull(transportMessage, nameof(transportMessage));
-            Guard.AgainstNull(stream, nameof(stream));
-
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-
-            try
-            {
-                if (_disposed)
-                {
-                    return;
-                }
-
-                var value = sync 
-                    ? Convert.ToBase64String(stream.ToBytes()) 
-                    : Convert.ToBase64String(await stream.ToBytesAsync().ConfigureAwait(false));
-
-                // always use `Produce` as `ProduceAsync` waits for the `DeliveryReport` to be produced, which slows down message sending
-                _producer.Produce(Topic,
-                    new Message<Null, string>
-                    {
-                        Value = value
-                    });
-
-                if (!_kafkaOptions.FlushEnqueue)
-                {
-                    return;
-                }
-
-                if (_kafkaOptions.UseCancellationToken)
-                {
-                    try
-                    {
-                        _producer.Flush(_cancellationToken);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                    }
-                }
-                else
-                {
-                    _producer.Flush(_operationTimeout);
-                }
-
-                MessageEnqueued?.Invoke(this, new MessageEnqueuedEventArgs(transportMessage, stream));
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            finally
-            {
-                _lock.Release();
-            }
-        }
-
-        public ReceivedMessage GetMessage()
-        {
-            return GetMessageAsync().GetAwaiter().GetResult();
-        }
-
-        public async Task<ReceivedMessage> GetMessageAsync()
-        {
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-
-            try
-            {
-                if (_disposed)
-                {
-                    return null;
-                }
-
-                if (_receivedMessages.Count > 0)
-                {
-                    return _receivedMessages.Dequeue();
-                }
-
-                ReadMessage();
-
-                var receivedMessage = _receivedMessages.Count > 0 ? _receivedMessages.Dequeue() : null;
-
-                if (receivedMessage != null)
-                {
-                    MessageReceived?.Invoke(this, new MessageReceivedEventArgs(receivedMessage));
-                }
-
-                return receivedMessage;
-            }
-            finally
-            {
-                _lock.Release();
-            }
-        }
-
-        public bool IsEmpty()
-        {
-            return IsEmptyAsync().GetAwaiter().GetResult();
-        }
-
-        public async ValueTask<bool> IsEmptyAsync()
-        {
-            if (_cancellationToken.IsCancellationRequested)
-            {
-                Operation?.Invoke(this, new OperationEventArgs("[is-empty/cancelled]", true));
-                return true;
-            }
-
-            Operation?.Invoke(this, new OperationEventArgs("[is-empty/starting]"));
-
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-
-            try
-            {
-                if (_receivedMessages.Count > 0 || _disposed)
-                {
-                    return false;
-                }
-
-                ReadMessage();
-
-                var result = _receivedMessages.Count == 0;
-
-                Operation?.Invoke(this, new OperationEventArgs("[is-empty]", result));
-
-                return result;
-            }
-            catch (OperationCanceledException)
-            {
-                Operation?.Invoke(this, new OperationEventArgs("[is-empty/cancelled]", true));
-            }
-            finally
-            {
-                _lock.Release();
-            }
-
+            Operation?.Invoke(this, new("[is-empty/cancelled]", true));
             return true;
         }
 
-        public async Task ReleaseAsync(object acknowledgementToken)
+        Operation?.Invoke(this, new("[is-empty/starting]"));
+
+        await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        try
         {
-            await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-
-            try
+            if (_receivedMessages.Count > 0 || _disposed)
             {
-                if (_disposed)
-                {
-                    return;
-                }
-
-                var token = (AcknowledgementToken)acknowledgementToken;
-
-                _receivedMessages.Enqueue(new ReceivedMessage(
-                    new MemoryStream(Convert.FromBase64String(token.ConsumeResult.Message.Value)),
-                    acknowledgementToken));
-
-                MessageReleased?.Invoke(this, new MessageReleasedEventArgs(acknowledgementToken));
+                return false;
             }
-            finally
-            {
-                _lock.Release();
-            }
+
+            ReadMessage();
+
+            var result = _receivedMessages.Count == 0;
+
+            Operation?.Invoke(this, new("[is-empty]", result));
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            Operation?.Invoke(this, new("[is-empty/cancelled]", true));
+        }
+        finally
+        {
+            _lock.Release();
         }
 
-        public event EventHandler<MessageEnqueuedEventArgs> MessageEnqueued;
-        public event EventHandler<MessageAcknowledgedEventArgs> MessageAcknowledged;
-        public event EventHandler<MessageReleasedEventArgs> MessageReleased;
-        public event EventHandler<MessageReceivedEventArgs> MessageReceived;
-        public event EventHandler<OperationEventArgs> Operation;
+        return true;
+    }
 
-        private void ReadMessage()
+    public async Task ReleaseAsync(object acknowledgementToken)
+    {
+        if (Guard.AgainstNull(acknowledgementToken) is not AcknowledgementToken token)
         {
-            if (!_subscribed)
-            {
-                try
-                {
-                    _consumer.Subscribe(Topic);
-                    _subscribed = true;
-                }
-                catch (Exception)
-                {
-                    return;
-                }
-            }
+            return;
+        }
 
-            ConsumeResult<Ignore, string> consumeResult = null;
+        await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 
-            try
-            {
-                consumeResult = _kafkaOptions.UseCancellationToken ? _consumer.Consume(_cancellationToken) : _consumer.Consume(_kafkaOptions.ConsumeTimeout);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-
-            if (consumeResult == null)
+        try
+        {
+            if (_disposed)
             {
                 return;
             }
 
-            var acknowledgementToken = new AcknowledgementToken(Guid.NewGuid(), consumeResult);
+            _receivedMessages.Enqueue(new(new MemoryStream(Convert.FromBase64String(token.ConsumeResult.Message.Value)), acknowledgementToken));
 
-            _receivedMessages.Enqueue(new ReceivedMessage(new MemoryStream(Convert.FromBase64String(consumeResult.Message.Value)), acknowledgementToken));
+            MessageReleased?.Invoke(this, new(acknowledgementToken));
         }
-
-        internal class AcknowledgementToken
+        finally
         {
-            public AcknowledgementToken(Guid messageId, ConsumeResult<Ignore, string> consumeResult)
+            _lock.Release();
+        }
+    }
+
+    public event EventHandler<MessageEnqueuedEventArgs>? MessageEnqueued;
+    public event EventHandler<MessageAcknowledgedEventArgs>? MessageAcknowledged;
+    public event EventHandler<MessageReleasedEventArgs>? MessageReleased;
+    public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
+    public event EventHandler<OperationEventArgs>? Operation;
+
+    public async Task EnqueueAsync(TransportMessage transportMessage, Stream stream)
+    {
+        Guard.AgainstNull(transportMessage, nameof(transportMessage));
+        Guard.AgainstNull(stream, nameof(stream));
+
+        await _lock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+
+        try
+        {
+            if (_disposed)
             {
-                MessageId = messageId;
-                ConsumeResult = consumeResult;
+                return;
             }
 
-            public ConsumeResult<Ignore, string> ConsumeResult { get; }
+            var value = Convert.ToBase64String(await stream.ToBytesAsync().ConfigureAwait(false));
 
-            public Guid MessageId { get; }
+            // always use `Produce` as `ProduceAsync` waits for the `DeliveryReport` to be produced, which slows down message sending
+            _producer.Produce(Topic,
+                new()
+                {
+                    Value = value
+                });
+
+            if (!_kafkaOptions.FlushEnqueue)
+            {
+                return;
+            }
+
+            if (_kafkaOptions.UseCancellationToken)
+            {
+                try
+                {
+                    _producer.Flush(_cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+            else
+            {
+                _producer.Flush(_operationTimeout);
+            }
+
+            MessageEnqueued?.Invoke(this, new(transportMessage, stream));
         }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    private void ReadMessage()
+    {
+        if (!_subscribed)
+        {
+            try
+            {
+                _consumer.Subscribe(Topic);
+                _subscribed = true;
+            }
+            catch (Exception)
+            {
+                return;
+            }
+        }
+
+        ConsumeResult<Ignore, string>? consumeResult = null;
+
+        try
+        {
+            consumeResult = _kafkaOptions.UseCancellationToken ? _consumer.Consume(_cancellationToken) : _consumer.Consume(_kafkaOptions.ConsumeTimeout);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        if (consumeResult == null)
+        {
+            return;
+        }
+
+        var acknowledgementToken = new AcknowledgementToken(Guid.NewGuid(), consumeResult);
+
+        _receivedMessages.Enqueue(new(new MemoryStream(Convert.FromBase64String(consumeResult.Message.Value)), acknowledgementToken));
+    }
+
+    internal class AcknowledgementToken
+    {
+        public AcknowledgementToken(Guid messageId, ConsumeResult<Ignore, string> consumeResult)
+        {
+            MessageId = messageId;
+            ConsumeResult = consumeResult;
+        }
+
+        public ConsumeResult<Ignore, string> ConsumeResult { get; }
+
+        public Guid MessageId { get; }
     }
 }

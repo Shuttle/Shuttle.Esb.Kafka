@@ -2,31 +2,28 @@
 using Microsoft.Extensions.DependencyInjection;
 using Shuttle.Core.Contract;
 
-namespace Shuttle.Esb.Kafka
+namespace Shuttle.Esb.Kafka;
+
+public class KafkaBuilder
 {
-    public class KafkaBuilder
+    internal readonly Dictionary<string, KafkaOptions> KafkaOptions = new();
+
+    public KafkaBuilder(IServiceCollection services)
     {
-        public IServiceCollection Services { get; }
+        Services = Guard.AgainstNull(services);
+    }
 
-        internal readonly Dictionary<string, KafkaOptions> KafkaOptions = new Dictionary<string, KafkaOptions>();
+    public IServiceCollection Services { get; }
 
-        public KafkaBuilder(IServiceCollection services)
-        {
-            Guard.AgainstNull(services, nameof(services));
+    public KafkaBuilder AddOptions(string name, KafkaOptions kafkaOptions)
+    {
+        Guard.AgainstNullOrEmptyString(name);
+        Guard.AgainstNull(kafkaOptions);
 
-            Services = services;
-        }
+        KafkaOptions.Remove(name);
 
-        public KafkaBuilder AddOptions(string name, KafkaOptions kafkaOptions)
-        {
-            Guard.AgainstNullOrEmptyString(name, nameof(name));
-            Guard.AgainstNull(kafkaOptions, nameof(kafkaOptions));
+        KafkaOptions.Add(name, kafkaOptions);
 
-            KafkaOptions.Remove(name);
-
-            KafkaOptions.Add(name, kafkaOptions);
-
-            return this;
-        }
+        return this;
     }
 }
