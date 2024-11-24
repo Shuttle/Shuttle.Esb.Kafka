@@ -16,7 +16,7 @@
 		<copyright>Copyright (c) 2024, Eben Roux</copyright>
 		<tags>kafka</tags>
 		<dependencies>
-      <dependency id="Confluent.Kafka" version="2.6.0" />
+      <dependency id="Confluent.Kafka" version="2.6.1" />
       <dependency id="Shuttle.Esb" version="20.0.0" />
 		</dependencies>
 	</metadata>
