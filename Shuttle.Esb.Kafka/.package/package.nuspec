@@ -13,7 +13,7 @@
 		<repository type="git" url="https://github.com/Shuttle/Shuttle.Esb.Kafka.git" />
 		<projectUrl>https://github.com/Shuttle/Shuttle.Esb.Kafka</projectUrl>
 		<description>Kafka implementation for use with Shuttle.Esb.</description>
-		<copyright>Copyright (c) 2024, Eben Roux</copyright>
+		<copyright>Copyright (c) 2025, Eben Roux</copyright>
 		<tags>kafka</tags>
 		<dependencies>
       <dependency id="Confluent.Kafka" version="2.6.1" />
