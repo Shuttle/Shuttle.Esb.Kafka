@@ -1,11 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
-	<ItemGroup>
+  <ItemGroup>
     <None Include=".package\AssemblyInfo.cs.template" />
     <None Include=".package\package.msbuild" />
     <None Include=".package\package.nuspec.template" />
@@ -14,8 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Confluent.Kafka" Version="2.5.1" />
-    <PackageReference Include="Shuttle.Esb" Version="15.0.0" />
+    <PackageReference Include="Confluent.Kafka" Version="2.6.1" />
+    <PackageReference Include="Shuttle.Esb" Version="20.0.0" />
   </ItemGroup>
 
 </Project>

@@ -2,23 +2,20 @@
 using Confluent.Kafka;
 using Shuttle.Core.Contract;
 
-namespace Shuttle.Esb.Kafka
+namespace Shuttle.Esb.Kafka;
+
+public class ConfigureProducerEventArgs : EventArgs
 {
-    public class ConfigureProducerEventArgs : EventArgs
+    private ProducerConfig _producerConfig;
+
+    public ConfigureProducerEventArgs(ProducerConfig producerConfig)
     {
-        private ProducerConfig _producerConfig;
+        _producerConfig = Guard.AgainstNull(producerConfig);
+    }
 
-        public ProducerConfig ProducerConfig
-        {
-            get => _producerConfig;
-            set => _producerConfig = value ?? throw new System.ArgumentNullException();
-        }
-
-        public ConfigureProducerEventArgs(ProducerConfig producerConfig)
-        {
-            Guard.AgainstNull(producerConfig, nameof(producerConfig));
-
-            _producerConfig = producerConfig;
-        }
+    public ProducerConfig ProducerConfig
+    {
+        get => _producerConfig;
+        set => _producerConfig = Guard.AgainstNull(value);
     }
 }

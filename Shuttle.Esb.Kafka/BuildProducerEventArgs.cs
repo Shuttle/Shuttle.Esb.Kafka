@@ -2,15 +2,14 @@
 using Confluent.Kafka;
 using Shuttle.Core.Contract;
 
-namespace Shuttle.Esb.Kafka
-{
-    public class BuildProducerEventArgs : EventArgs
-    {
-        public ProducerBuilder<Null, string> ProducerBuilder { get; }
+namespace Shuttle.Esb.Kafka;
 
-        public BuildProducerEventArgs(ProducerBuilder<Null, string> producerBuilder)
-        {
-            ProducerBuilder = Guard.AgainstNull(producerBuilder, nameof(producerBuilder));
-        }
+public class BuildProducerEventArgs : EventArgs
+{
+    public BuildProducerEventArgs(ProducerBuilder<Null, string> producerBuilder)
+    {
+        ProducerBuilder = Guard.AgainstNull(producerBuilder);
     }
+
+    public ProducerBuilder<Null, string> ProducerBuilder { get; }
 }
